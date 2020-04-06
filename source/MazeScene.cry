@@ -15,6 +15,8 @@ const ORIGIN = -2;
 
 const MOVE_DELAY = 4;
 
+const SPOTLIGHT_RADIUS = 10;
+
 class Wall {
 	field row;
 	field col;
@@ -155,9 +157,6 @@ class MazeScene : AbstractScene {
 			this.cells.add([]);
 			for (c = 0; c < this.nCols; ++c) {
 				this.cells[r].add(new Cell());
-				if (visionType == VisionType.FULL) {
-					this.cells[r][-1].visible = true;
-				}
 			}
 		}
 
@@ -332,6 +331,53 @@ class MazeScene : AbstractScene {
 
 		this.cheeseRow = this.cheeseRow;
 		this.cheeseCol = this.cheeseCol;
+
+		defaultVision = this.visionType == VisionType.FULL;
+		for (row = 0; row < this.nRows; ++row) {
+			for (col = 0; col < this.nCols; ++col) {
+				this.cells[row][col].visible = defaultVision;
+			}
+		}
+
+		this.updateVision();
+	}
+
+	function updateVision() {
+		switch (this.visionType) {
+			case VisionType.FULL:
+				// Handled in reset().
+				break;
+			case VisionType.LINE_OF_SIGHT:
+				this.cells[this.mouseRow][this.mouseCol].visible = true;
+				// Look up.
+				for (row = this.mouseRow; row > 0 && !this.cells[row][this.mouseCol].topWall; --row) {
+					this.cells[row - 1][this.mouseCol].visible = true;
+				}
+				// Look down.
+				for (row = this.mouseRow; row < this.nRows - 1 && !this.cells[row + 1][this.mouseCol].topWall; ++row) {
+					this.cells[row + 1][this.mouseCol].visible = true;
+				}
+				// Look left.
+				for (col = this.mouseCol; col > 0 && !this.cells[this.mouseRow][col].leftWall; --col) {
+					this.cells[this.mouseRow][col - 1].visible = true;
+				}
+				// Look right.
+				for (col = this.mouseCol; col < this.nCols - 1 && !this.cells[this.mouseRow][col + 1].leftWall; ++col) {
+					this.cells[this.mouseRow][col + 1].visible = true;
+				}
+				break;
+			case VisionType.SPOTLIGHT:
+				for (rowOffset = -SPOTLIGHT_RADIUS; rowOffset <= SPOTLIGHT_RADIUS; ++rowOffset) {
+					for (colOffset = -SPOTLIGHT_RADIUS; colOffset <= SPOTLIGHT_RADIUS; ++colOffset) {
+						row = this.mouseRow + rowOffset;
+						col = this.mouseCol + colOffset;
+						if (0 <= row && row < this.nRows && 0 <= col && col < this.nCols && rowOffset**2 + colOffset**2 <= SPOTLIGHT_RADIUS**2) {
+							this.cells[row][col].visible = true;
+						}
+					}
+				}
+				break;
+		}
 	}
 
 	function getNeighbors(cellCoords) {
@@ -542,9 +588,12 @@ class MazeScene : AbstractScene {
 
 		for (direction : directions) {
 			if (this.moveDelays[direction] == 0) {
+				// Move.
 				this.move(direction);
 				this.mouseDirection = direction;
 				this.moveDelays[direction] = MOVE_DELAY;
+				// Update vision.
+				this.updateVision();
 			}
 		}
 
@@ -570,6 +619,8 @@ class MazeScene : AbstractScene {
 					this.move(this.mouseDirection);
 				}
 			}
+			// Update vision.
+			this.updateVision();
 		}
 	}
 
@@ -601,6 +652,14 @@ class MazeScene : AbstractScene {
 							, MazeScene.visitedColor[0], MazeScene.visitedColor[1], MazeScene.visitedColor[2]
 							);
 					}
+				} else {
+					Graphics2D.Draw.rectangle
+						( x
+						, y
+						, this.cellWidth
+						, this.cellHeight
+						, 128, 128, 128
+						);
 				}
 
 				// Draw markers.
@@ -653,27 +712,40 @@ class MazeScene : AbstractScene {
 		for (r = 0; r < this.nRows; ++r) {
 			for (c = 0; c < this.nCols; ++c) {
 				cell = this.cells[r][c];
+				x = this.cellWidth * c;
+				y = this.cellHeight * r;
+				drawTop = false;
+				drawLeft = false;
 				if (cell.visible) {
-					x = this.cellWidth * c;
-					y = this.cellHeight * r;
-
 					if (r > 0 && cell.topWall) {
-						Graphics2D.Draw.rectangle
-							( x - this.wallWidth / 2
-							, y - this.wallWidth / 2
-							, this.cellWidth + this.wallWidth
-							, this.wallWidth
-							, 0, 0, 0
-							);
+						drawTop = true;
 					}
 					if (c > 0 && cell.leftWall) {
-						Graphics2D.Draw.rectangle
-							( x - this.wallWidth / 2
-							, y - this.wallWidth / 2
-							, this.wallWidth
-							, this.cellHeight + this.wallWidth
-							, 0, 0, 0);
+						drawLeft = true;
 					}
+				}
+				if (r > 0 && this.cells[r - 1][c].visible && cell.topWall) {
+					drawTop = true;
+				}
+				if (c > 0 && this.cells[r][c - 1].visible && cell.leftWall) {
+					drawLeft = true;
+				}
+				if (drawTop) {
+					Graphics2D.Draw.rectangle
+						( x - this.wallWidth / 2
+						, y - this.wallWidth / 2
+						, this.cellWidth + this.wallWidth
+						, this.wallWidth
+						, 0, 0, 0
+						);
+				}
+				if (drawLeft) {
+					Graphics2D.Draw.rectangle
+						( x - this.wallWidth / 2
+						, y - this.wallWidth / 2
+						, this.wallWidth
+						, this.cellHeight + this.wallWidth
+						, 0, 0, 0);
 				}
 			}
 		}
