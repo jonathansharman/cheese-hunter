@@ -1,0 +1,136 @@
+import Graphics2D;
+import Graphics2DText;
+import TwoCansAlpha4;
+
+const TITLE_FONT_SIZE = 32;
+const OPTION_FONT_SIZE = 16;
+
+const X_RES = 640;
+const Y_RES = 480;
+
+const TITLE_POS = Y_RES / 4;
+const FIRST_OPTION_POS = Y_RES / 2;
+const OPTION_POS_DELTA = Y_RES / 8;
+
+enum MazeType { RIVER, TUNNELS, LABORATORY }
+enum MazeSize { SMALL, MEDIUM, LARGE }
+enum VisionType { FULL, LINE_OF_SIGHT, SPOTLIGHT }
+
+class Option {
+	field value;
+	field image;
+
+	constructor(value, image) {
+		this.value = value;
+		this.image = image;
+	}
+}
+
+class TitleScene : AbstractScene {
+	field options;
+	field optionIdx = 0;
+	field settings = [1, 1, 0];
+
+	field titleImage;
+	field leftArrowImage;
+	field rightArrowImage;
+
+	constructor() : base() {
+		font = FontResource.fromSystem('Arial').getRenderer().setColor(255, 192, 0);
+
+		this.titleImage = font.setSize(TITLE_FONT_SIZE).render("Cheese Hunter");
+
+		font.setSize(OPTION_FONT_SIZE);
+
+		this.options =
+			[ [ new Option(MazeType.RIVER, font.render("River"))
+			  , new Option(MazeType.TUNNELS, font.render("Tunnels"))
+			  , new Option(MazeType.LABORATORY, font.render("Laboratory"))
+			  ]
+			, [ new Option(MazeSize.SMALL, font.render("Small"))
+			  , new Option(MazeSize.MEDIUM, font.render("Medium"))
+			  , new Option(MazeSize.LARGE, font.render("Large"))
+			  ]
+			, [ new Option(VisionType.FULL, font.render("Full Vision"))
+			  , new Option(VisionType.LINE_OF_SIGHT, font.render("Line-of-sight"))
+			  , new Option(VisionType.SPOTLIGHT, font.render("Spotlight"))
+			  ]
+			];
+
+		font.setColor(255, 255, 255);
+		this.leftArrowImage = font.render("←  ");
+		this.rightArrowImage = font.render("  →");
+	}
+
+	function update(inputManager, events) {
+		for (e : events) {
+			switch (e.type) {
+				case EventType.MENU:
+					switch (e.button) {
+						case MenuCommand.UP:
+							--this.optionIdx;
+							this.optionIdx %= this.options.length;
+							break;
+						case MenuCommand.DOWN:
+							++this.optionIdx;
+							this.optionIdx %= this.options.length;
+							break;
+						case MenuCommand.LEFT:
+							--this.settings[this.optionIdx];
+							this.settings[this.optionIdx] %= this.options[this.optionIdx].length;
+							break;
+						case MenuCommand.RIGHT:
+							++this.settings[this.optionIdx];
+							this.settings[this.optionIdx] %= this.options[this.optionIdx].length;
+							break;
+						default:
+							break;
+					}
+					break;
+				default:
+					break;
+			}
+		}
+
+		if (inputManager.isKeyPressed(KeyboardKey.ENTER) || inputManager.isKeyPressed(KeyboardKey.SPACE)) {
+			this.switchScene(new MazeScene
+				( this.options[0][this.settings[0]].value
+				, this.options[1][this.settings[1]].value
+				, this.options[2][this.settings[2]].value
+				));
+		}
+	}
+
+	function drawCentered(image, x, y) {
+		image.draw(x - image.width / 2, y - image.height / 2);
+	}
+
+	function render() {
+		Graphics2D.Draw.fill(0, 0, 0);
+
+		// Draw title.
+		this.drawCentered(this.titleImage, X_RES / 2, TITLE_POS);
+
+		for (i = 0; i < this.options.length; ++i) {
+			optionImage = this.options[i][this.settings[i]].image;
+			y = FIRST_OPTION_POS + OPTION_POS_DELTA * i;
+			// Draw arrows if selected.
+			if (this.optionIdx == i) {
+				this.leftArrowImage.draw
+					( X_RES / 2 - optionImage.width / 2 - this.leftArrowImage.width
+					, y - this.leftArrowImage.height / 2
+					);
+				this.rightArrowImage.draw
+					( X_RES / 2 + optionImage.width / 2
+					, y - this.rightArrowImage.height / 2
+					);
+			}
+			// Draw option.
+			this.drawCentered
+				( optionImage
+				, X_RES / 2
+				, y
+				);
+		}
+	}
+}

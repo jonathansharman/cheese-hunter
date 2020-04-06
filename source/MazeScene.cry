@@ -1,0 +1,690 @@
+import Graphics2D;
+import Math;
+import Random;
+import TwoCansAlpha4;
+
+// Direction indices.
+const U = 0;
+const L = 1;
+const D = 2;
+const R = 3;
+
+// Special path values.
+const UNKNOWN = -1;
+const ORIGIN = -2;
+
+const MOVE_DELAY = 4;
+
+class Wall {
+	field row;
+	field col;
+	constructor(row, col) {
+		this.row = row;
+		this.col = col;
+	}
+}
+class HWall : Wall {
+	constructor(row, col) : base(row, col) {}
+	function neighborCells() {
+		return this.row > 0
+			? [[this.row, this.col], [this.row - 1, this.col]]
+			: [[this.row, this.col]]
+			;
+	}
+	function breakIn(cell) { cell.topWall = false; }
+}
+class VWall : Wall {
+	constructor(row, col) : base(row, col) {}
+	function neighborCells() {
+		return this.col > 0
+			? [[this.row, this.col], [this.row, this.col - 1]]
+			: [[this.row, this.col]]
+			;
+	}
+	function breakIn(cell) { cell.leftWall = false; }
+}
+
+class Cell {
+	field leftWall;
+	field topWall;
+	field path = UNKNOWN;
+	field marked = false;
+	field dead = false;
+	field visible = false;
+}
+
+function leftOf(direction) {
+	switch (direction) {
+		case U: return L;
+		case D: return R;
+		case L: return D;
+		case R: return U;
+		default: throw new Exception("Invalid direction");
+	}
+}
+
+function rightOf(direction) {
+	switch (direction) {
+		case U: return R;
+		case D: return L;
+		case L: return U;
+		case R: return D;
+		default: throw new Exception("Invalid direction");
+	}
+}
+
+class MazeScene : AbstractScene {
+	field mazeType;
+	field visionType;
+
+	field nRows;
+	field nCols;
+	field startRow;
+	field startCol;
+	field cheeseRow;
+	field cheeseCol;
+	field cellWidth;
+	field cellHeight;
+	field wallWidth;
+
+	field cells;
+
+	field mouseRow;
+	field mouseCol;
+	field mouseDirection;
+
+	field moveDelays = [0, 0, 0, 0];
+
+	field mouseImages;
+	field cheeseImage;
+	field markerImage;
+
+	static field visitedColor = [160, 160, 255];
+	static field deadColor = [80, 80, 128];
+	static field solutionColor = [255, 128, 64];
+
+	constructor(mazeType, mazeSize, visionType) : base() {
+		this.mazeType = mazeType;
+		this.visionType = visionType;
+
+		switch (mazeSize) {
+			case MazeSize.SMALL:
+				this.nRows = 30;
+				this.nCols = 40;
+				this.cellWidth = 16;
+				this.cellHeight = 16;
+				this.wallWidth = 2;
+				prefix = "large-";
+				break;
+			case MazeSize.MEDIUM:
+				this.nRows = 48;
+				this.nCols = 64;
+				this.cellWidth = 10;
+				this.cellHeight = 10;
+				this.wallWidth = 2;
+				prefix = "medium-";
+				break;
+			case MazeSize.LARGE:
+				this.nRows = 60;
+				this.nCols = 80;
+				this.cellWidth = 8;
+				this.cellHeight = 8;
+				this.wallWidth = 1;
+				prefix = "small-";
+				break;
+		}
+
+		this.mouseImages = [null] * 4;
+		this.mouseImages[U] = Images.get(prefix + "u-mouse.png");
+		this.mouseImages[D] = Images.get(prefix + "d-mouse.png");
+		this.mouseImages[L] = Images.get(prefix + "l-mouse.png");
+		this.mouseImages[R] = Images.get(prefix + "r-mouse.png");
+
+		this.cheeseImage = Images.get(prefix + "cheese.png");
+
+		this.markerImage = Images.get(prefix + "marker.png");
+
+		this.startRow = this.nRows - 1;
+		this.startCol = 0;
+
+		this.cheeseRow = 0;
+		this.cheeseCol = this.nCols - 1;
+
+		this.cells = [];
+		for (r = 0; r < this.nRows; ++r) {
+			this.cells.add([]);
+			for (c = 0; c < this.nCols; ++c) {
+				this.cells[r].add(new Cell());
+				if (visionType == VisionType.FULL) {
+					this.cells[r][-1].visible = true;
+				}
+			}
+		}
+
+		this.reset();
+	}
+
+	function buildMazePrims() {
+		connected = [];
+		for (r = 0; r < this.nRows; ++r) {
+			connected.add([]);
+			for (c = 0; c < this.nCols; ++c) {
+				// Erect all walls and mark cells as unvisited.
+				this.cells[r][c].leftWall = true;
+				this.cells[r][c].topWall = true;
+				this.cells[r][c].path = UNKNOWN;
+				this.cells[r][c].marked = false;
+				this.cells[r][c].dead = false;
+
+				connected[r].add(false);
+			}
+		}
+
+		rootRow = Random.randomInt(this.nRows);
+		rootCol = Random.randomInt(this.nCols);
+		connected[rootRow][rootCol] = true;
+
+		walls = [new HWall(rootRow, rootCol), new VWall(rootRow, rootCol)];
+		while (walls.length > 0) {
+			wallIdx = Random.randomInt(walls.length);
+			wall = walls[wallIdx];
+			cells = wall.neighborCells();
+			for (cell : cells) {
+				if (connected[cell[0]][cell[1]]) continue;
+
+				// Break wall.
+				wall.breakIn(this.cells[wall.row][wall.col]);
+				// Mark cell as connected.
+				connected[cell[0]][cell[1]] = true;
+				// Add neighboring walls to work list.
+				if (cell[0] > 0) {
+					walls.add(new HWall(cell[0], cell[1]));
+				}
+				if (cell[0] < this.nRows - 1) {
+					walls.add(new HWall(cell[0] + 1, cell[1]));
+				}
+				if (cell[1] > 0) {
+					walls.add(new VWall(cell[0], cell[1]));
+				}
+				if (cell[1] < this.nCols - 1) {
+					walls.add(new VWall(cell[0], cell[1] + 1));
+				}
+			}
+			walls.remove(wallIdx);
+		}
+	}
+
+	function buildMazeRecursiveBacktracker() {
+		connected = [];
+		for (r = 0; r < this.nRows; ++r) {
+			connected.add([]);
+			for (c = 0; c < this.nCols; ++c) {
+				// Erect all walls and mark cells as unvisited.
+				this.cells[r][c].leftWall = true;
+				this.cells[r][c].topWall = true;
+				this.cells[r][c].path = UNKNOWN;
+				this.cells[r][c].marked = false;
+				this.cells[r][c].dead = false;
+
+				connected[r].add(false);
+			}
+		}
+
+		root = [Random.randomInt(this.nRows), Random.randomInt(this.nCols)];
+		connected[root[0]][root[1]] = true;
+		current = root;
+		stack = [root];
+		while (stack.length > 0) {
+			neighbors = this.getNeighbors(current);
+			unconnectedNeighbors = [];
+			for (neighbor : neighbors) {
+				if (!connected[neighbor[0]][neighbor[1]]) {
+					unconnectedNeighbors.add(neighbor);
+				}
+			}
+			if (unconnectedNeighbors.length > 0) {
+				// Choose an unvisited neighbor of the current cell.
+				chosen = unconnectedNeighbors.choice();
+				stack.add(current);
+
+				// Break wall between current and chosen cell.
+				rowDiff = chosen[0] - current[0];
+				colDiff = chosen[1] - current[1];
+				if (rowDiff == -1) {
+					// Chosen is above.
+					this.cells[current[0]][current[1]].topWall = false;
+				} else if (rowDiff == 1) {
+					// Chosen is below.
+					this.cells[chosen[0]][chosen[1]].topWall = false;
+				} else if (colDiff == -1) {
+					// Chosen is to left.
+					this.cells[current[0]][current[1]].leftWall = false;
+				} else {
+					// Chosen is to right.
+					this.cells[chosen[0]][chosen[1]].leftWall = false;
+				}
+				connected[chosen[0]][chosen[1]] = true;
+
+				current = chosen;
+			} else {
+				// Dead end. Backtrack.
+				current = stack[stack.length - 1];
+				stack.pop();
+			}
+		}
+	}
+
+	function buildMazeRecursiveDivision() {
+		for (r = 0; r < this.nRows; ++r) {
+			for (c = 0; c < this.nCols; ++c) {
+				// Erect all walls and mark cells as unvisited.
+				this.cells[r][c].leftWall = true;
+				this.cells[r][c].topWall = true;
+				this.cells[r][c].path = UNKNOWN;
+				this.cells[r][c].marked = false;
+				this.cells[r][c].dead = false;
+			}
+		}
+		this.buildMazeRecursiveDivisionHelper(0, this.nRows, 0, this.nCols);
+	}
+	function buildMazeRecursiveDivisionHelper(rowStart, nRows, colStart, nCols) {
+		// Base case.
+		if (nRows == 1 && nCols == 1) {
+			return;
+		}
+
+		if (nRows > nCols) {
+			// Split rows.
+			splitRow = Random.randomInt(rowStart + 1, rowStart + nRows);
+			col = Random.randomInt(colStart, colStart + nCols);
+			this.cells[splitRow][col].topWall = false;
+			// Recurse.
+			this.buildMazeRecursiveDivisionHelper(rowStart, splitRow - rowStart, colStart, nCols);
+			this.buildMazeRecursiveDivisionHelper(splitRow, rowStart + nRows - splitRow, colStart, nCols);
+		} else {
+			// Splits columns.
+			splitCol = Random.randomInt(colStart + 1, colStart + nCols);
+			row = Random.randomInt(rowStart, rowStart + nRows);
+			this.cells[row][splitCol].leftWall = false;
+			// Recurse.
+			this.buildMazeRecursiveDivisionHelper(rowStart, nRows, colStart, splitCol - colStart);
+			this.buildMazeRecursiveDivisionHelper(rowStart, nRows, splitCol, colStart + nCols - splitCol);
+		}
+	}
+
+	function reset() {
+		switch (this.mazeType) {
+			case MazeType.RIVER:
+				this.buildMazePrims();
+				break;
+			case MazeType.TUNNELS:
+				this.buildMazeRecursiveBacktracker();
+				break;
+			case MazeType.LABORATORY:
+				this.buildMazeRecursiveDivision();
+				break;
+		}
+
+		this.mouseRow = this.startRow;
+		this.mouseCol = this.startCol;
+		this.mouseDirection = R;
+		this.cells[this.mouseRow][this.mouseCol].path = ORIGIN;
+
+		this.cheeseRow = this.cheeseRow;
+		this.cheeseCol = this.cheeseCol;
+	}
+
+	function getNeighbors(cellCoords) {
+		result = [];
+		if (cellCoords[0] > 0) {
+			result.add([cellCoords[0] - 1, cellCoords[1]]);
+		}
+		if (cellCoords[0] < this.nRows - 1) {
+			result.add([cellCoords[0] + 1, cellCoords[1]]);
+		}
+		if (cellCoords[1] > 0) {
+			result.add([cellCoords[0], cellCoords[1] - 1]);
+		}
+		if (cellCoords[1] < this.nCols - 1) {
+			result.add([cellCoords[0], cellCoords[1] + 1]);
+		}
+		return result;
+	}
+
+	// Try to Move the mouse (rodent) and return true for success, false for failure.
+	function move(direction) {
+		moved = false;
+		switch (direction) {
+			case U:
+				if (this.mouseRow > 0 && !this.cells[this.mouseRow][this.mouseCol].topWall) {
+					--this.mouseRow;
+					moved = true;
+					if (this.cells[this.mouseRow][this.mouseCol].path == UNKNOWN) {
+						this.cells[this.mouseRow][this.mouseCol].path = D;
+						this.cells[this.mouseRow][this.mouseCol].marked = false;
+					}
+				}
+				break;
+			case D:
+				if (this.mouseRow < this.nRows - 1 && !this.cells[this.mouseRow + 1][this.mouseCol].topWall) {
+					++this.mouseRow;
+					moved = true;
+					if (this.cells[this.mouseRow][this.mouseCol].path == UNKNOWN) {
+						this.cells[this.mouseRow][this.mouseCol].path = U;
+						this.cells[this.mouseRow][this.mouseCol].marked = false;
+					}
+				}
+				break;
+			case L:
+				if (this.mouseCol > 0 && !this.cells[this.mouseRow][this.mouseCol].leftWall) {
+					--this.mouseCol;
+					moved = true;
+					if (this.cells[this.mouseRow][this.mouseCol].path == UNKNOWN) {
+						this.cells[this.mouseRow][this.mouseCol].path = R;
+						this.cells[this.mouseRow][this.mouseCol].marked = false;
+					}
+				}
+				break;
+			case R:
+				if (this.mouseCol < this.nCols - 1 && !this.cells[this.mouseRow][this.mouseCol + 1].leftWall) {
+					++this.mouseCol;
+					moved = true;
+					if (this.cells[this.mouseRow][this.mouseCol].path == UNKNOWN) {
+						this.cells[this.mouseRow][this.mouseCol].path = L;
+						this.cells[this.mouseRow][this.mouseCol].marked = false;
+					}
+				}
+				break;
+			default:
+				throw new Exception("Invalid direction");
+		}
+		if (moved) {
+			this.markDead();
+		}
+		return moved;
+	}
+
+	function markDead() {
+		for (dir : [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+			r = this.mouseRow + dir[0];
+			if (r < 0 || r > this.nRows - 1) {
+				continue;
+			}
+			c = this.mouseCol + dir[1];
+			if (c < 0 || c > this.nCols - 1) {
+				continue;
+			}
+
+			deadEnd = true;
+			while (true) {
+				// Check for side passages.
+				if (dir[0] == 0) {
+					// Horizontal check. Check up and down.
+					topLive = r > 0 && !this.cells[r][c].topWall && !this.cells[r - 1][c].dead;
+					bottomLive = r < this.nRows - 1 && !this.cells[r + 1][c].topWall && !this.cells[r + 1][c].dead;
+					if (topLive || bottomLive) {
+						deadEnd = false;
+						break;
+					}
+				} else {
+					// Vertical check. Check left and right.
+					leftLive = c > 0 && !this.cells[r][c].leftWall && !this.cells[r][c - 1].dead;
+					rightLive = c < this.nCols - 1
+						&& !this.cells[r][c + 1].leftWall
+						&& !this.cells[r][c + 1].dead;
+					if (leftLive || rightLive) {
+						deadEnd = false;
+						break;
+					}
+				}
+
+				// Stop once the start or cheese is hit (not a dead end).
+				if ((r == this.startRow && c == this.startCol) || (r == this.cheeseRow && c == this.cheeseCol)) {
+					deadEnd = false;
+					break;
+				}
+
+				// Stop once a wall is hit.
+				if (dir[0] == -1) {
+					// Check above.
+					if (r == 0 || this.cells[r][c].topWall || this.cells[r][c].dead) {
+						break;
+					}
+				} else if (dir[0] == 1) {
+					// Check below.
+					if (r == this.nRows - 1 || this.cells[r + 1][c].topWall || this.cells[r + 1][c].dead) {
+						break;
+					}
+				} else if (dir[1] == -1) {
+					// Check left.
+					if (c == 0 || this.cells[r][c].leftWall || this.cells[r][c].dead) {
+						break;
+					}
+				} else if (dir[1] == 1) {
+					// Check right.
+					if (c == this.nCols - 1 || this.cells[r][c + 1].leftWall || this.cells[r][c + 1].dead) {
+						break;
+					}
+				}
+
+				r += dir[0];
+				c += dir[1];
+			}
+			if (deadEnd) {
+				// Mark all cells dead from the end of the passage to the mouse.
+				while (r != this.mouseRow || c != this.mouseCol) {
+					this.cells[r][c].dead = true;
+					r -= dir[0];
+					c -= dir[1];
+				}
+			}
+		}
+	}
+
+	function update(inputManager, events) {
+		if (inputManager.isKeyPressedThisFrame(KeyboardKey.ESCAPE)) {
+			// Return to title screen.
+			this.switchScene(new TitleScene());
+		}
+
+		for (e : events) {
+			if (e.type == EventType.MOUSE_PRESS) {
+				r = e.y / this.cellHeight;
+				c = e.x / this.cellWidth;
+
+				if (this.cells[r][c].path == UNKNOWN) {
+					// Toggle marker.
+					this.cells[r][c].marked = !this.cells[r][c].marked;
+				} else {
+					// Teleport.
+					this.mouseRow = r;
+					this.mouseCol = c;
+				}
+			}
+		}
+
+		if (this.mouseRow == this.cheeseRow && this.mouseCol == this.cheeseCol) {
+			// Allow reset if the mouse is at the cheese.
+			if (inputManager.isKeyPressed(KeyboardKey.SPACE)) {
+				this.reset();
+				return;
+			}
+		}
+
+		// Mouse (rodent) movement.
+		directions = [];
+		if (inputManager.isKeyPressed(KeyboardKey.UP)) {
+			directions.add(U);
+		} else {
+			this.moveDelays[U] = 0;
+		}
+		if (inputManager.isKeyPressed(KeyboardKey.DOWN)) {
+			directions.add(D);
+		} else {
+			this.moveDelays[D] = 0;
+		}
+		if (inputManager.isKeyPressed(KeyboardKey.LEFT)) {
+			directions.add(L);
+		} else {
+			this.moveDelays[L] = 0;
+		}
+		if (inputManager.isKeyPressed(KeyboardKey.RIGHT)) {
+			directions.add(R);
+		} else {
+			this.moveDelays[R] = 0;
+		}
+
+		for (direction : [U, D, L, R]) {
+			if (this.moveDelays[direction] > 0) {
+				--this.moveDelays[direction];
+			}
+		}
+
+		for (direction : directions) {
+			if (this.moveDelays[direction] == 0) {
+				this.move(direction);
+				this.mouseDirection = direction;
+				this.moveDelays[direction] = MOVE_DELAY;
+			}
+		}
+
+		// Rewind path.
+		if (inputManager.isKeyPressed(KeyboardKey.SPACE)) {
+			pathDirection = this.cells[this.mouseRow][this.mouseCol].path;
+			if (pathDirection != UNKNOWN && pathDirection != ORIGIN) {
+				this.mouseDirection = pathDirection;
+				this.move(this.mouseDirection);
+			}
+		}
+
+		// Auto-explore.
+		if (inputManager.isKeyPressed(KeyboardKey.ENTER)) {
+			left = leftOf(this.mouseDirection);
+			moved = this.move(left);
+			if (moved) {
+				this.mouseDirection = left;
+			} else {
+				moved = this.move(this.mouseDirection);
+				if (!moved) {
+					this.mouseDirection = rightOf(this.mouseDirection);
+					this.move(this.mouseDirection);
+				}
+			}
+		}
+	}
+
+	function render() {
+		Graphics2D.Draw.fill(192, 192, 192);
+
+		for (r = 0; r < this.nRows; ++r) {
+			for (c = 0; c < this.nCols; ++c) {
+				cell = this.cells[r][c];
+				x = this.cellWidth * c;
+				y = this.cellHeight * r;
+				if (cell.visible) {
+					if (cell.dead) {
+						// Highlight dead cells.
+						Graphics2D.Draw.rectangle
+							( x
+							, y
+							, this.cellWidth
+							, this.cellHeight
+							, MazeScene.deadColor[0], MazeScene.deadColor[1], MazeScene.deadColor[2]
+							);
+					} else if (cell.path != UNKNOWN) {
+						// Highlight live visited cells.
+						Graphics2D.Draw.rectangle
+							( x
+							, y
+							, this.cellWidth
+							, this.cellHeight
+							, MazeScene.visitedColor[0], MazeScene.visitedColor[1], MazeScene.visitedColor[2]
+							);
+					}
+				}
+
+				// Draw markers.
+				if (cell.marked) {
+					this.markerImage.draw(x, y);
+				}
+			}
+		}
+
+		// Draw solution path if it exists.
+		if (this.mouseRow == this.cheeseRow && this.mouseCol == this.cheeseCol) {
+			r = this.cheeseRow;
+			c = this.cheeseCol;
+			while (this.cells[r][c].path != ORIGIN) {
+				Graphics2D.Draw.rectangle
+					( this.cellWidth * c
+					, this.cellHeight * r
+					, this.cellWidth
+					, this.cellHeight
+					, MazeScene.solutionColor[0], MazeScene.solutionColor[1], MazeScene.solutionColor[2]
+					);
+
+				switch (this.cells[r][c].path) {
+					case U:
+						--r;
+						break;
+					case D:
+						++r;
+						break;
+					case L:
+						--c;
+						break;
+					case R:
+						++c;
+						break;
+					default:
+						break;
+				}
+			}
+			Graphics2D.Draw.rectangle
+				( this.cellWidth * c
+				, this.cellHeight * r
+				, this.cellWidth
+				, this.cellHeight
+				, MazeScene.solutionColor[0], MazeScene.solutionColor[1], MazeScene.solutionColor[2]
+				);
+		}
+
+		// Draw walls.
+		for (r = 0; r < this.nRows; ++r) {
+			for (c = 0; c < this.nCols; ++c) {
+				cell = this.cells[r][c];
+				if (cell.visible) {
+					x = this.cellWidth * c;
+					y = this.cellHeight * r;
+
+					if (r > 0 && cell.topWall) {
+						Graphics2D.Draw.rectangle
+							( x - this.wallWidth / 2
+							, y - this.wallWidth / 2
+							, this.cellWidth + this.wallWidth
+							, this.wallWidth
+							, 0, 0, 0
+							);
+					}
+					if (c > 0 && cell.leftWall) {
+						Graphics2D.Draw.rectangle
+							( x - this.wallWidth / 2
+							, y - this.wallWidth / 2
+							, this.wallWidth
+							, this.cellHeight + this.wallWidth
+							, 0, 0, 0);
+					}
+				}
+			}
+		}
+
+		// Draw cheese.
+		this.cheeseImage.draw
+			( this.cellWidth * this.cheeseCol
+			, this.cellHeight * this.cheeseRow
+			);
+
+		// Draw mouse.
+		this.mouseImages[this.mouseDirection].draw(this.cellWidth * this.mouseCol, this.cellHeight * this.mouseRow);
+	}
+}
